@@ -1,0 +1,14 @@
+diff --git a/llama-api-server/src/main.rs b/llama-api-server/src/main.rs
+index 9c96ffa..501a7d5 100644
+--- a/llama-api-server/src/main.rs
++++ b/llama-api-server/src/main.rs
+@@ -536,9 +536,6 @@ async fn main() -> Result<(), ServerError> {
+     if log_level == LogLevel::Debug || log_level == LogLevel::Trace {
+         plugin_debug = true;
+     }
+-    // set global logger
+-    wasi_logger::Logger::install().expect("failed to install wasi_logger::Logger");
+-    log::set_max_level(log_level.into());
+ 
+     if let Ok(api_key) = std::env::var("API_KEY") {
+         // define a const variable for the API key

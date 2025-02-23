@@ -1,0 +1,3 @@
+[submodule "apps/llamaedge"]
+	path = apps/llamaedge
+	url = https://github.com/LlamaEdge/LlamaEdge.git
