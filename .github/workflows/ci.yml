@@ -1,0 +1,74 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-action.json
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Manually update GitHub's containerd
+        run: |
+          wget https://github.com/containerd/containerd/releases/download/v1.7.12/containerd-1.7.12-linux-amd64.tar.gz
+          sudo tar Czxvf /usr containerd-1.7.12-linux-amd64.tar.gz
+          sudo systemctl restart containerd
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: wasm32-wasip1
+          cache: false
+
+      - name: Build llama-api-server demo image
+        run: |
+          git -C apps/llamaedge apply $PWD/disable_wasi_logging.patch
+          OPT_PROFILE=release RUSTFLAGS="--cfg wasmedge --cfg tokio_unstable" make apps/llamaedge/llama-api-server
+
+      - name: Install plugin
+        run: |
+          curl -sSf https://raw.githubusercontent.com/WasmEdge/WasmEdge/master/utils/install.sh | bash -s -- --plugins wasi_nn-ggml -v 0.14.1
+          ./inject_dependencise.sh ~/.wasmedge/plugin/libwasmedgePluginWasiNN.so /opt/containerd/lib
+
+      - name: Install runwasi wasmedge shim
+        run: |
+          sudo apt-get -y install protobuf-compiler libseccomp-dev
+          git clone -b wasmedge-enable-plugin --single-branch https://github.com/CaptainVincent/runwasi.git
+          cd runwasi
+          make build-wasmedge
+          INSTALL="sudo install" make install-wasmedge
+
+      - name: Download model
+        run: |
+          curl -LO https://huggingface.co/second-state/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q5_K_M.gguf
+
+      - name: Run llama-api-server
+        run: |
+          nohup sudo ctr run --rm --runtime=io.containerd.wasmedge.v1 \
+            --net-host \
+            --mount type=bind,src=/opt/containerd/lib,dst=/opt/containerd/lib,options=bind:ro \
+            --env WASMEDGE_PLUGIN_PATH=/opt/containerd/lib \
+            --mount type=bind,src=$PWD,dst=/resource,options=bind:ro \
+            --env WASMEDGE_WASINN_PRELOAD=default:GGML:CPU:/resource/Llama-3.2-1B-Instruct-Q5_K_M.gguf \
+            ghcr.io/second-state/llama-api-server:latest testggml llama-api-server.wasm \
+            --prompt-template llama-3-chat \
+            --ctx-size 4096 \
+            --model-name llama-3-1b &
+          sleep 3
+          RESPONSE=$(curl -X POST http://localhost:8080/v1/chat/completions \
+            -H 'accept:application/json' \
+            -H 'Content-Type: application/json' \
+            -d '{"messages":[{"role":"system", "content": "You are a helpful assistant."}, {"role":"user", "content": "Who is Robert Oppenheimer?"}], "model":"llama-3-8b"}')
+          echo "Response: $RESPONSE"
