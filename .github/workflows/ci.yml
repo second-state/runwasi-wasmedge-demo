@@ -6,12 +6,14 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  demo:
     runs-on: ubuntu-latest
 
     steps:
@@ -45,7 +47,7 @@ jobs:
       - name: Install runwasi wasmedge shim
         run: |
           sudo apt-get -y install protobuf-compiler libseccomp-dev
-          git clone -b wasmedge-enable-plugin --single-branch https://github.com/CaptainVincent/runwasi.git
+          git clone https://github.com/containerd/runwasi.git
           cd runwasi
           make build-wasmedge
           INSTALL="sudo install" make install-wasmedge
