@@ -1,0 +1,136 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-action.json
+
+name: k3s llama-api-server CI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  k3s-demo:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: wasm32-wasip1
+          cache: false
+
+      - name: Install WasmEdge with WASI-NN plugin
+        run: |
+          curl -sSf https://raw.githubusercontent.com/WasmEdge/WasmEdge/master/utils/install.sh | bash -s -- --plugins wasi_nn-ggml -v 0.14.1
+          
+      - name: Build and install Runwasi's containerd-shim-wasmedge-v1
+        run: |
+          cd $HOME
+          git clone https://github.com/containerd/runwasi.git
+          cd runwasi
+          ./scripts/setup-linux.sh
+          make build-wasmedge
+          INSTALL="sudo install" LN="sudo ln -sf" make install-wasmedge
+          source ~/.bashrc
+          which containerd-shim-wasmedge-v1 # verify installation
+
+      - name: Install k3s
+        run: |
+          cd $HOME
+          curl -sfL https://get.k3s.io | sh -
+          sudo chmod 777 /etc/rancher/k3s/k3s.yaml # hack
+
+      - name: Build LlamaEdge's llama-api-server.wasm
+        run: |
+          cd $GITHUB_WORKSPACE
+
+          sed -i -e '/define CHECK_CONTAINERD_VERSION/,/^endef/{
+          s/Containerd version must be/WARNING: Containerd version should be/
+          /exit 1;/d
+          }' Makefile
+
+          git -C apps/llamaedge apply $PWD/disable_wasi_logging.patch
+
+          OPT_PROFILE=release RUSTFLAGS="--cfg wasmedge --cfg tokio_unstable" make apps/llamaedge/llama-api-server
+
+      - name: Build the llama-api-server.wasm's OCI image and import it to k3s' containerd
+        run: |
+          cd apps/llamaedge/llama-api-server
+          oci-tar-builder --name llama-api-server \
+            --repo ghcr.io/second-state \
+            --tag latest \
+            --module target/wasm32-wasip1/release/llama-api-server.wasm \
+            -o target/wasm32-wasip1/release/img-oci.tar
+          sudo k3s ctr image import --all-platforms target/wasm32-wasip1/release/img-oci.tar
+
+          sudo k3s ctr images ls # verify image import
+
+      - name: Download gguf model
+        run: |
+          sudo mkdir -p $HOME/models
+          sudo chmod 777 $HOME/models
+          cd /home/runner/models
+          curl -LO https://huggingface.co/second-state/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q5_K_M.gguf
+
+      - name: Create and apply Kubernetes deployment
+        run: |
+          sudo k3s kubectl apply -f $GITHUB_WORKSPACE/k3s/k3s_deployment.yaml
+          sleep 20
+          sudo k3s kubectl get pods
+          
+      - name: Port-forward from k3s in background
+        run: |
+          sudo k3s kubectl port-forward svc/llama-api-server-service 8080:8080 > /dev/null 2>&1 &
+          PF_PID=$!
+          echo "Port-forward PID: $PF_PID"
+          echo "PORTER_PID=$PF_PID" >> $GITHUB_ENV
+          sleep 6
+      
+      - name: Test API endpoint and log the output
+        run: |
+          mkdir -p logs
+          curl -X POST http://localhost:8080/v1/chat/completions \
+            -H 'accept:application/json' \
+            -H 'Content-Type: application/json' \
+            -d '{
+                "messages": [
+                    {"role": "system", "content": "You are a helpful assistant."},
+                    {"role": "user", "content": "Who is Robert Oppenheimer?"}
+                ],
+                "model": "llama-3-1b"
+            }' | tee "logs/api_response_$(date +'%Y-%m-%d').json"
+      
+      - name: Display and save pod logs
+        run: |
+          POD_NAME=$(sudo k3s kubectl get pods -l app=llama-api-server --no-headers -o custom-columns=":metadata.name" | head -n 1)
+          echo "POD_NAME=$POD_NAME" >> $GITHUB_ENV
+          sudo k3s kubectl logs $POD_NAME
+          sudo k3s kubectl logs $POD_NAME > "logs/pod_logs_$(date +'%Y-%m-%d').log"
+          
+      - name: Upload Logs as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-logs-${{ github.run_number }}
+          path: logs/
+
+      - name: Cleanup
+        if: always()
+        run: |
+          echo "Cleaning up resources..."
+          # Kill port-forward if it exists
+          if [ -n "${{ env.PORTER_PID }}" ]; then
+            sudo kill ${{ env.PORTER_PID }} 2>/dev/null || true
+          fi
+          # Delete kubernetes resources
+          sudo k3s kubectl delete -f $GITHUB_WORKSPACE/k3s_deployment.yaml 2>/dev/null || true
+          # Show final status
+          sudo k3s kubectl get pods -l app=llama-api-server || true
