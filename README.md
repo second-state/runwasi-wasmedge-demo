@@ -2,6 +2,8 @@
 
 > For now, only llama-api-server has been added as a plugin demo. In the future, some basic tests will be included as part of regular CI testing.
 
+> For `Runwasi with WasmEdge runtime demo in k3s`, refer [./k3s/k3s.README.md](https://github.com/second-state/runwasi-wasmedge-demo/k3s/k3s.README.md)
+
 1. Manually removed the dependency on wasi_logging due to issue [#4003](https://github.com/WasmEdge/WasmEdge/issues/4003).
 
 ```bash
