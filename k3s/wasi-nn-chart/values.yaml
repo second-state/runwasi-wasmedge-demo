@@ -1,0 +1,22 @@
+# path values to be used by helm
+paths:
+  wasi_nn_plugin_lib_dir: "/home/dev/.wasmedge/lib"
+  wasi_nn_plugin_file_dir: "/home/dev/.wasmedge/plugin"
+  wasi_nn_plugin_file: "/home/dev/.wasmedge/plugin/libwasmedgePluginWasiNN.so"
+  
+# systemLibs values to be used by helm
+systemLibs:
+  - name: libm_so_6
+    hostPath: /lib/aarch64-linux-gnu/libm.so.6
+  - name: libpthread_so_0
+    hostPath: /lib/aarch64-linux-gnu/libpthread.so.0
+  - name: libc_so_6
+    hostPath: /lib/aarch64-linux-gnu/libc.so.6
+  - name: ld_linux_aarch64_so_1
+    hostPath: /lib/ld-linux-aarch64.so.1
+  - name: libdl_so_2
+    hostPath: /lib/aarch64-linux-gnu/libdl.so.2
+  - name: libstdc++_so_6
+    hostPath: /lib/aarch64-linux-gnu/libstdc++.so.6
+  - name: libgcc_s_so_1
+    hostPath: /lib/aarch64-linux-gnu/libgcc_s.so.1

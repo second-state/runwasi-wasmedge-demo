@@ -1,5 +1,7 @@
 # Running `github.com/second-state/runwasi-wasmedge-demo` in k3s
 
+> For `generating custom k3s_deployment_op.yaml template with wasi-nn plugin and dependencies volume mounts for different linux based OS'es`, refer [./k3s/k3s.README.md)(https://github.com/second-state/runwasi-wasmedge-demo/k3s/k3s.helm.README.md)
+
 ### 1. Installing dependencies 
 ```sh
 # apt installable
@@ -98,7 +100,14 @@ For example, on Ubuntu 22.04 running on ARM64 platform, the paths for system lib
 
 So, for a different platform, all libs in output of 
 `~/.wasmedge/plugin/libwasmedgePluginWasiNN.so`
-should be mounted as files to exact same paths at which they were in host machine
+should be mounted as files to exact same paths at which they were in host machine.
+
+> For this purpose, `k3s/wasi-nn-chart/values-generator.sh` is here
+( NOTE : the `valued-generator.sh` leverages `ldd` and `wasmedge -v` )
+
+> Again, for `generating custom k3s_deployment_op.yaml template with wasi-nn plugin and dependencies volume mounts for different linux based OS'es`, refer [./k3s/k3s.README.md)(https://github.com/second-state/runwasi-wasmedge-demo/k3s/k3s.helm.README.md)
+
+After following the steps from `k3s.helm.README.md`, you the generated `k3s_deployment_op.yaml` can be used for the linux based OS on which it was generated
 
 ```sh
 sudo k3s kubectl apply -f k3s/k3s_deployment.yaml
