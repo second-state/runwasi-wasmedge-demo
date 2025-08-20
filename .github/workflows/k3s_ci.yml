@@ -1,9 +1,11 @@
 # yaml-language-server: $schema=https://json.schemastore.org/github-action.json
 
-name: k3s llama-api-server CI
+name: k3s CI
 
 on:
   push:
+    branches: [main]
+  pull_request:
     branches: [main]
   workflow_dispatch:
   schedule:
@@ -41,7 +43,6 @@ jobs:
           make build-wasmedge
           INSTALL="sudo install" LN="sudo ln -sf" make install-wasmedge
           source ~/.bashrc
-          which containerd-shim-wasmedge-v1 # verify installation
 
       - name: Install k3s
         run: |
@@ -49,7 +50,7 @@ jobs:
           curl -sfL https://get.k3s.io | sh -
           sudo chmod 777 /etc/rancher/k3s/k3s.yaml # hack
 
-      - name: Build LlamaEdge's llama-api-server.wasm
+      - name: Build LlamaEdge's llama-api-server.wasm's OCI image and import it to k3s' containerd
         run: |
           cd $GITHUB_WORKSPACE
 
@@ -60,19 +61,17 @@ jobs:
 
           git -C apps/llamaedge apply $PWD/disable_wasi_logging.patch
 
+          rustup target add wasm32-wasip1
           OPT_PROFILE=release RUSTFLAGS="--cfg wasmedge --cfg tokio_unstable" make apps/llamaedge/llama-api-server
 
-      - name: Build the llama-api-server.wasm's OCI image and import it to k3s' containerd
-        run: |
           cd apps/llamaedge/llama-api-server
-          oci-tar-builder --name llama-api-server \
-            --repo ghcr.io/second-state \
-            --tag latest \
-            --module target/wasm32-wasip1/release/llama-api-server.wasm \
-            -o target/wasm32-wasip1/release/img-oci.tar
-          sudo k3s ctr image import --all-platforms target/wasm32-wasip1/release/img-oci.tar
-
-          sudo k3s ctr images ls # verify image import
+            oci-tar-builder --name llama-api-server \
+                --repo ghcr.io/second-state \
+                --tag latest \
+                --module target/wasm32-wasip1/release/llama-api-server.wasm \
+                -o target/wasm32-wasip1/release/img-oci.tar
+            sudo k3s ctr image import --all-platforms target/wasm32-wasip1/release/img-oci.tar
+            sudo k3s ctr images ls | grep "ghcr.io/second-state/llama-api-server:latest" # verify
 
       - name: Download gguf model
         run: |
@@ -81,12 +80,116 @@ jobs:
           cd /home/runner/models
           curl -LO https://huggingface.co/second-state/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q5_K_M.gguf
 
+      - name: Create logs directory
+        run: |
+          cd $HOME
+          mkdir -p logs
+
       - name: Create and apply Kubernetes deployment
         run: |
           sudo k3s kubectl apply -f $GITHUB_WORKSPACE/k3s/k3s_deployment.yaml
-          sleep 20
-          sudo k3s kubectl get pods
-          
+          sleep 30
+
+      - name: Pod health check (pre-request)
+        run: |
+            cd $HOME
+
+            TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+            POD_LOG_FILE="$HOME/logs/llama-pod-check-1-Pre-request.md"
+
+            {
+            echo "# Pod Health Check Report 1 (Pre-request)"
+            echo "**Generated at:** $(date -u)"
+            echo "**Timestamp:** ${TIMESTAMP}"
+            echo ""
+
+            PODS=$(sudo k3s kubectl get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+
+            for POD in $PODS; do
+                NS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{.metadata.namespace}')
+                STATUS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{.status.phase}')
+                READY=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}{.ready}{" "}{end}')
+                RESTARTS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}{.restartCount}{" "}{end}')
+
+                echo "## Pod: \`$POD\`"
+                echo "**Namespace:** $NS"
+                echo ""
+                echo "- **Status:** $STATUS"
+                echo "- **Containers Ready:** $READY"
+                echo "- **Restart Counts:** $RESTARTS"
+
+                echo "- **Container States:**"
+                sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}  - {.name}: {.state}{"\n"}{end}' | sed 's/map\[//;s/]//'
+
+                EVENTS=$(sudo k3s kubectl get events --field-selector involvedObject.name="$POD" -o json 2>/dev/null | jq -r '.items[] | select(.type=="Warning") | "  - " + .reason + ": " + .message')
+                if [[ -z "$EVENTS" ]]; then
+                    echo "- **Events:** None"
+                else
+                    echo "- **Events:**"
+                    echo "$EVENTS"
+                fi
+
+                echo "- **current Usage:**"
+                sudo k3s kubectl top pod "$POD" --no-headers 2>/dev/null | awk '{print "  - CPU: " $2 ", Memory: " $3}' || echo "  - (current resource usage not available)"
+                
+                echo ""
+            done
+
+            } > "$POD_LOG_FILE"
+
+            echo "Pod health check saved : $POD_LOG_FILE"
+            cat $POD_LOG_FILE
+
+
+      - name: Service check
+        run: |
+            cd $HOME
+
+            TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+            SERVICE_LOG_FILE="$HOME/logs/llama-service-check.md"
+
+            # create service report
+            {
+            echo "# Service Health Check Report"
+            echo "**Generated at:** $(date -u)"
+            echo "**Timestamp:** ${TIMESTAMP}"
+            echo ""
+
+            echo "## Service Endpoints"
+            echo ""
+
+            sudo k3s kubectl get endpoints -o json | jq -r '
+            .items[] |
+            "- **\(.metadata.name):** " +
+            ([
+                .subsets[]?.addresses[]?.ip
+            ] | join(", "))
+            '
+
+            echo ""
+            echo "## Services Status"
+            echo ""
+            sudo k3s kubectl get services -o custom-columns=NAME:.metadata.name,TYPE:.spec.type,CLUSTER-IP:.spec.clusterIP,EXTERNAL-IP:.status.loadBalancer.ingress[0].ip,PORT:.spec.ports[0].port --no-headers | while read line; do
+                echo "- $line"
+            done
+
+            echo ""
+            echo "## Services' Details"
+            echo ""
+            sudo k3s kubectl get services -o json | jq -r '
+            .items[] |
+            "### \(.metadata.name)\n" +
+            "- **Namespace:** \(.metadata.namespace)\n" +
+            "- **Type:** \(.spec.type)\n" +
+            "- **Cluster IP:** \(.spec.clusterIP)\n" +
+            "- **Ports:** \([.spec.ports[]? | "\(.port):\(.targetPort)/\(.protocol)"] | join(", "))\n"
+            '
+
+            } > "$SERVICE_LOG_FILE"
+
+            echo "Service health check saved : $SERVICE_LOG_FILE"
+            cat $SERVICE_LOG_FILE # verify
+
       - name: Port-forward from k3s in background
         run: |
           sudo k3s kubectl port-forward svc/llama-api-server-service 8080:8080 > /dev/null 2>&1 &
@@ -97,7 +200,6 @@ jobs:
       
       - name: Test API endpoint and log the output
         run: |
-          mkdir -p logs
           curl -X POST http://localhost:8080/v1/chat/completions \
             -H 'accept:application/json' \
             -H 'Content-Type: application/json' \
@@ -107,30 +209,200 @@ jobs:
                     {"role": "user", "content": "Who is Robert Oppenheimer?"}
                 ],
                 "model": "llama-3-1b"
-            }' | tee "logs/api_response_$(date +'%Y-%m-%d').json"
+            }' | tee "$HOME/logs/api_response_$(date +'%Y-%m-%d').json"
       
       - name: Display and save pod logs
         run: |
           POD_NAME=$(sudo k3s kubectl get pods -l app=llama-api-server --no-headers -o custom-columns=":metadata.name" | head -n 1)
           echo "POD_NAME=$POD_NAME" >> $GITHUB_ENV
           sudo k3s kubectl logs $POD_NAME
-          sudo k3s kubectl logs $POD_NAME > "logs/pod_logs_$(date +'%Y-%m-%d').log"
+          sudo k3s kubectl logs $POD_NAME > "$HOME/logs/pod_logs_$(date +'%Y-%m-%d').log"
           
+      - name: Pod health check (post-request)
+        run: |
+            cd $HOME
+
+            TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+            POD_LOG_FILE="$HOME/logs/llama-pod-check-1-post-request.md"
+
+            {
+            echo "# Pod Health Check Report 2 (post-request)"
+            echo "**Generated at:** $(date -u)"
+            echo "**Timestamp:** ${TIMESTAMP}"
+            echo ""
+
+            PODS=$(sudo k3s kubectl get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+
+            for POD in $PODS; do
+                NS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{.metadata.namespace}')
+                STATUS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{.status.phase}')
+                READY=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}{.ready}{" "}{end}')
+                RESTARTS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}{.restartCount}{" "}{end}')
+
+                echo "## Pod: \`$POD\`"
+                echo "**Namespace:** $NS"
+                echo ""
+                echo "- **Status:** $STATUS"
+                echo "- **Containers Ready:** $READY"
+                echo "- **Restart Counts:** $RESTARTS"
+
+                echo "- **Container States:**"
+                sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}  - {.name}: {.state}{"\n"}{end}' | sed 's/map\[//;s/]//'
+
+                EVENTS=$(sudo k3s kubectl get events --field-selector involvedObject.name="$POD" -o json 2>/dev/null | jq -r '.items[] | select(.type=="Warning") | "  - " + .reason + ": " + .message')
+                if [[ -z "$EVENTS" ]]; then
+                    echo "- **Events:** None"
+                else
+                    echo "- **Events:**"
+                    echo "$EVENTS"
+                fi
+
+                echo "- **Current Usage:**"
+                sudo k3s kubectl top pod "$POD" --no-headers 2>/dev/null | awk '{print "  - CPU: " $2 ", Memory: " $3}' || echo "  - (Current resource usage not available)"
+                
+                echo ""
+            done
+
+            } > "$POD_LOG_FILE"
+
+            echo "Pod health check saved : $POD_LOG_FILE"
+            cat $POD_LOG_FILE
+
+      - name: Generate test report
+        run: |
+          cd $HOME
+          
+          TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+          REPORT_FILE="$HOME/logs/final-summary-report.md"
+          
+          echo "# Final Test Summary Report" > "$REPORT_FILE"
+          echo "**Generated at:** $(date -u)" >> "$REPORT_FILE"
+          echo "**Timestamp:** ${TIMESTAMP}" >> "$REPORT_FILE"
+          echo "" >> "$REPORT_FILE"
+          
+          echo "## Services Summary" >> "$REPORT_FILE"
+          echo "" >> "$REPORT_FILE"
+          echo "### Service Endpoints" >> "$REPORT_FILE"
+          echo "" >> "$REPORT_FILE"
+          sudo k3s kubectl get endpoints -o json | jq -r '
+          .items[] |
+          "- **\(.metadata.name):** " +
+          ([
+              .subsets[]?.addresses[]?.ip
+          ] | join(", "))
+          ' >> "$REPORT_FILE"
+          echo "" >> "$REPORT_FILE"
+          echo "### Service List" >> "$REPORT_FILE"
+          echo "" >> "$REPORT_FILE"
+          echo "| Service | Type | Cluster IP | Port |" >> "$REPORT_FILE"
+          echo "|---------|------|------------|------|" >> "$REPORT_FILE"
+          sudo k3s kubectl get services --no-headers -o custom-columns=NAME:.metadata.name,TYPE:.spec.type,CLUSTER-IP:.spec.clusterIP,PORT:.spec.ports[0].port | while read name type ip port; do
+              echo "| $name | $type | $ip | $port |" >> "$REPORT_FILE"
+          done
+          echo "" >> "$REPORT_FILE"
+
+          echo "## Pod State Analysis" >> "$REPORT_FILE"
+          echo "" >> "$REPORT_FILE"
+          
+          # current pods
+          PODS=$(sudo k3s kubectl get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+          
+          for POD in $PODS; do
+              echo "### Pod: \`$POD\`" >> "$REPORT_FILE"
+              echo "" >> "$REPORT_FILE"
+              
+              # determine pod type based on name pattern
+              POD_TYPE="Unknown"
+              if [[ "$POD" == *"llama-api-server"* ]]; then
+                  POD_TYPE="LlamaEdge API Server"
+              fi
+              
+              echo "**Type:** $POD_TYPE" >> "$REPORT_FILE"
+              echo "" >> "$REPORT_FILE"
+              
+              # current pod state
+              STATUS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{.status.phase}' 2>/dev/null || echo "N/A")
+              READY=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}{.ready}{" "}{end}' 2>/dev/null | xargs || echo "N/A")
+              RESTARTS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}{.restartCount}{" "}{end}' 2>/dev/null | xargs || echo "N/A")
+              
+              echo "| Test Phase | Status | Ready | Restarts |" >> "$REPORT_FILE"
+              echo "|------------|--------|-------|----------|" >> "$REPORT_FILE"
+              
+              # pre-request pod states
+              echo -n "| Pre-request | " >> "$REPORT_FILE"
+              if [ -f "$HOME/logs/llama-pod-check-1-Pre-request.md" ]; then
+                  pre_status=$(grep -A 10 "## Pod: \`$POD\`" "$HOME/logs/llama-pod-check-1-Pre-request.md" 2>/dev/null | grep "Status:" | head -1 | cut -d: -f2 | xargs 2>/dev/null || echo "N/A")
+                  pre_ready=$(grep -A 10 "## Pod: \`$POD\`" "$HOME/logs/llama-pod-check-1-Pre-request.md" 2>/dev/null | grep "Containers Ready:" | head -1 | cut -d: -f2 | xargs 2>/dev/null || echo "N/A")
+                  pre_restarts=$(grep -A 10 "## Pod: \`$POD\`" "$HOME/logs/llama-pod-check-1-Pre-request.md" 2>/dev/null | grep "Restart Counts:" | head -1 | cut -d: -f2 | xargs 2>/dev/null || echo "N/A")
+                  echo "$pre_status | $pre_ready | $pre_restarts |" >> "$REPORT_FILE"
+              else
+                  echo "N/A | N/A | N/A |" >> "$REPORT_FILE"
+              fi
+              
+              # post-request pod states
+              echo -n "| Post-request | " >> "$REPORT_FILE"
+              if [ -f "$HOME/logs/llama-pod-check-1-post-request.md" ]; then
+                  post_status=$(grep -A 10 "## Pod: \`$POD\`" "$HOME/logs/llama-pod-check-1-post-request.md" 2>/dev/null | grep "Status:" | head -1 | cut -d: -f2 | xargs 2>/dev/null || echo "N/A")
+                  post_ready=$(grep -A 10 "## Pod: \`$POD\`" "$HOME/logs/llama-pod-check-1-post-request.md" 2>/dev/null | grep "Containers Ready:" | head -1 | cut -d: -f2 | xargs 2>/dev/null || echo "N/A")
+                  post_restarts=$(grep -A 10 "## Pod: \`$POD\`" "$HOME/logs/llama-pod-check-1-post-request.md" 2>/dev/null | grep "Restart Counts:" | head -1 | cut -d: -f2 | xargs 2>/dev/null || echo "N/A")
+                  echo "$post_status | $post_ready | $post_restarts |" >> "$REPORT_FILE"
+              else
+                  echo "N/A | N/A | N/A |" >> "$REPORT_FILE"
+              fi
+              
+              # current pod state
+              echo "| Current | $STATUS | $READY | $RESTARTS |" >> "$REPORT_FILE"
+              
+              echo "" >> "$REPORT_FILE"
+          done
+          
+          echo "## Test Results Summary" >> "$REPORT_FILE"
+          echo "" >> "$REPORT_FILE"
+          
+          echo "### API Test Summary" >> "$REPORT_FILE"
+          echo "" >> "$REPORT_FILE"
+          
+          if [ -f "$HOME/logs/api_response_$(date +'%Y-%m-%d').json" ]; then
+              if jq -e '.choices[0].message.content' "$HOME/logs/api_response_$(date +'%Y-%m-%d').json" >/dev/null 2>&1; then
+                  echo "- **API Test:** PASSED" >> "$REPORT_FILE"
+                  echo "- **Response:** Valid JSON with content" >> "$REPORT_FILE"
+                  
+                  RESPONSE_LENGTH=$(jq -r '.choices[0].message.content' "$HOME/logs/api_response_$(date +'%Y-%m-%d').json" 2>/dev/null | wc -c || echo "N/A")
+                  echo "- **Response Length:** ${RESPONSE_LENGTH} characters" >> "$REPORT_FILE"
+              else
+                  echo "- **API Test:** FAILED" >> "$REPORT_FILE"
+                  echo "- **Response:** Invalid or incomplete JSON" >> "$REPORT_FILE"
+              fi
+          else
+              echo "- **API Test:** FAILED" >> "$REPORT_FILE"
+              echo "- **Response:** No response file found" >> "$REPORT_FILE"
+          fi
+          echo "" >> "$REPORT_FILE"
+          
+          echo "## Logs Directory Structure" >> "$REPORT_FILE"
+          echo "" >> "$REPORT_FILE"
+          echo "\`\`\`" >> "$REPORT_FILE"
+          echo "$HOME/logs/" >> "$REPORT_FILE"
+          find logs -type f 2>/dev/null | sort | sed 's|^$HOME/logs/|├── |' >> "$REPORT_FILE" || echo "├── (no files found)" >> "$REPORT_FILE"
+          echo "\`\`\`" >> "$REPORT_FILE"
+          echo "" >> "$REPORT_FILE"
+          
+          echo "(Full report saved to $HOME/logs/final-summary-report.md)"
+          cat $REPORT_FILE
+
       - name: Upload Logs as Artifact
         uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: daily-logs-${{ github.run_number }}
-          path: logs/
+          name: daily-logs-${{ github.run_number }}-${{ github.run_attempt }}
+          path: /home/runner/logs/
 
       - name: Cleanup
         if: always()
         run: |
-          echo "Cleaning up resources..."
-          # Kill port-forward if it exists
-          if [ -n "${{ env.PORTER_PID }}" ]; then
-            sudo kill ${{ env.PORTER_PID }} 2>/dev/null || true
+          if [ -n "$PORTER_PID" ]; then
+            sudo kill $PORTER_PID 2>/dev/null || true
           fi
-          # Delete kubernetes resources
-          sudo k3s kubectl delete -f $GITHUB_WORKSPACE/k3s_deployment.yaml 2>/dev/null || true
-          # Show final status
-          sudo k3s kubectl get pods -l app=llama-api-server || true
+
+          sudo k3s kubectl delete -f $GITHUB_WORKSPACE/k3s/k3s_deployment.yaml 2>/dev/null || true
+          
