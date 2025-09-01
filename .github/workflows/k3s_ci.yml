@@ -9,7 +9,7 @@ on:
     branches: [main]
   workflow_dispatch:
   schedule:
-    - cron: "0 0 * * *"
+    - cron: "23 02 * * *"
 
 env:
   CARGO_TERM_COLOR: always
