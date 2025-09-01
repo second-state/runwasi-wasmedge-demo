@@ -1,4 +1,6 @@
-# Running `github.com/second-state/runwasi-wasmedge-demo` in k3s
+# *Running `LlamaEdge's llama-api-server` inside `k8s`*
+
+Here, we run LlamaEdge's [llama-api-server](https://github.com/LlamaEdge/LlamaEdge/tree/main/llama-api-server) inside `k3s` with the help of runwasi's `wasmedge-runtime` and wasmedge's `WASI-NN plugin`
 
 ### 1. Installing dependencies 
 ```sh
@@ -42,8 +44,6 @@ sudo systemctl restart k3s
 
 ### 3. Building image ghcr.io/second-state/llama-api-server:latest
 This step builds the `ghcr.io/second-state/llama-api-server:latest` image and imports it to the k3s' containerd's local image store
-
-> same as `Build and import demo image` from [README.md]](https://github.com/second-state/runwasi-wasmedge-demo/README.md)
 
 ```sh
 # build llama-server-wasm
@@ -98,7 +98,14 @@ For example, on Ubuntu 22.04 running on ARM64 platform, the paths for system lib
 
 So, for a different platform, all libs in output of 
 `~/.wasmedge/plugin/libwasmedgePluginWasiNN.so`
-should be mounted as files to exact same paths at which they were in host machine
+should be mounted as files to exact same paths at which they were in host machine.
+
+> For this purpose, `./helm-resources/wasi-nn-chart/values-generator.sh` is here
+( NOTE : the `valued-generator.sh` leverages `ldd` and `wasmedge -v` )
+
+> For `generating custom k3s_deployment_op.yaml template with wasi-nn plugin and dependencies volume mounts for different linux based OS'es`, refer `./helm-resources`
+
+After following the steps from `./helm-resources/README.md`, the generated `k3s_deployment_op.yaml` can be used for the linux based OS on which it was generated
 
 ```sh
 sudo k3s kubectl apply -f k3s/k3s_deployment.yaml
