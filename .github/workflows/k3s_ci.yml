@@ -87,7 +87,6 @@ jobs:
 
       - name: Create and apply Kubernetes deployment
         run: |
-
           sudo k3s kubectl apply -f $GITHUB_WORKSPACE/examples/k3s-example/k3s_deployment.yaml
           sleep 20
           sudo k3s kubectl get pods
