@@ -8,6 +8,7 @@ Each demo is validated through a daily CI so as to streamline and validate the s
 > Current demos include :
 >  1. *Running `LlamaEdge's llama-api-server` `standalone`*
 >  2. *Running `LlamaEdge's llama-api-server` inside `k8s`*
+>  3. *Running `LlamaEdge's llama-api-server` as backend pods in `k8s` where requests are distributed by a `load-balancer`*
 
 ## Demos
 
@@ -24,3 +25,12 @@ Same as the `1`st demo, just inside k8s environment (*k3s used here*)
 
   1. `./k3s-example`
   2. `./.github/workflows/k3s-ci.yml`
+
+
+### 3. *Running `LlamaEdge's llama-api-server` as backend pods in `k8s` where requests are distributed by a `load-balancer`*
+This demo features `LlamaEdge's llama-api-server` (as WASM-pods) runnning different gguf models in a multi-pod environment - all managed by a load-balancer (also a WASM-pod) - assisted by a service-watcher utilizing `kube-rs` client (a regular non-WASM pod)
+> How it works :
+![Architecture Diagram](k3s-load-balancer-example/docs/diagrams/loadbalancer-watcher-architecture.png)
+
+  1. `./k3s-load-balancer-example`
+  2. `./.github/k3s-load-balancer-ci.yml`
