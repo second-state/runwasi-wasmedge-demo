@@ -1,0 +1,55 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: watcher-sa
+  namespace: default
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: watcher-role
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: watcher-rb
+subjects:
+  - kind: ServiceAccount
+    name: watcher-sa
+    namespace: default
+roleRef:
+  kind: ClusterRole
+  name: watcher-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: service-watcher
+  labels:
+    app: service-watcher
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: service-watcher
+  template:
+    metadata:
+      labels:
+        app: service-watcher
+    spec:
+      serviceAccountName: watcher-sa
+      containers:
+        - name: watcher
+          image: docker.io/vatsalkeshav/watcher:0.91
+          imagePullPolicy: Never
+          env:
+            - name: RUST_LOG
+              value: info

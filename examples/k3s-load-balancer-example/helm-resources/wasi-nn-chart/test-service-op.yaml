@@ -1,0 +1,125 @@
+---
+# Source: llama-chart/templates/test-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: llama-test-service
+  labels:
+    llamaedge/target: "true"
+  annotations:
+    llamaedge/weight: "2"
+spec:
+  selector:
+    app: llama-test
+  ports:
+    - port: 8080
+      targetPort: 8080
+  type: ClusterIP
+---
+# Source: llama-chart/templates/test-service.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llama-test
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: llama-test
+  template:
+    metadata:
+      labels:
+        app: llama-test
+    spec:
+      runtimeClassName: wasmedge
+      containers:
+        - name: llama-api-server
+          image: ghcr.io/second-state/llama-api-server:latest
+          imagePullPolicy: Never
+          command: ["llama-api-server.wasm"]
+          args:
+            - "--prompt-template"
+            - "llama-3-chat"
+            - "--ctx-size"
+            - "4096"
+            - "--model-name"
+            - "llama-3-3b-uncensored"
+          env:
+            - name: WASMEDGE_PLUGIN_PATH
+              value: "/home/dev/.wasmedge/plugin"
+            - name: LD_LIBRARY_PATH
+              value: "/home/dev/.wasmedge/lib"
+            - name: WASMEDGE_WASINN_PRELOAD
+              value: "default:GGML:CPU:/home/dev/models/Llama-3.2-3B-Instruct-Uncensored-Q5_K_M.gguf"
+          volumeMounts:
+            - name: gguf-model-file
+              mountPath: /home/dev/models/Llama-3.2-3B-Instruct-Uncensored-Q5_K_M.gguf
+              readOnly: true
+            - name: wasi-nn-plugin-file
+              mountPath: /home/dev/.wasmedge/plugin/libwasmedgePluginWasiNN.so
+              readOnly: true
+            - name: wasi-nn-plugin-lib-dir
+              mountPath: /home/dev/.wasmedge/lib
+              readOnly: true
+            - name: libm_so_6
+              mountPath: /lib/aarch64-linux-gnu/libm.so.6
+              readOnly: true
+            - name: libpthread_so_0
+              mountPath: /lib/aarch64-linux-gnu/libpthread.so.0
+              readOnly: true
+            - name: libc_so_6
+              mountPath: /lib/aarch64-linux-gnu/libc.so.6
+              readOnly: true
+            - name: ld_linux_aarch64_so_1
+              mountPath: /lib/ld-linux-aarch64.so.1
+              readOnly: true
+            - name: libdl_so_2
+              mountPath: /lib/aarch64-linux-gnu/libdl.so.2
+              readOnly: true
+            - name: libstdc++_so_6
+              mountPath: /lib/aarch64-linux-gnu/libstdc++.so.6
+              readOnly: true
+            - name: libgcc_s_so_1
+              mountPath: /lib/aarch64-linux-gnu/libgcc_s.so.1
+              readOnly: true
+      volumes:
+        - name: gguf-model-file
+          hostPath:
+            path: /home/dev/models/Llama-3.2-3B-Instruct-Uncensored-Q5_K_M.gguf
+            type: File
+        - name: wasi-nn-plugin-file
+          hostPath:
+            path: /home/dev/.wasmedge/plugin/libwasmedgePluginWasiNN.so
+            type: File
+        - name: wasi-nn-plugin-lib-dir
+          hostPath:
+            path: /home/dev/.wasmedge/lib
+            type: Directory
+        - name: libm_so_6
+          hostPath:
+            path: /lib/aarch64-linux-gnu/libm.so.6
+            type: File
+        - name: libpthread_so_0
+          hostPath:
+            path: /lib/aarch64-linux-gnu/libpthread.so.0
+            type: File
+        - name: libc_so_6
+          hostPath:
+            path: /lib/aarch64-linux-gnu/libc.so.6
+            type: File
+        - name: ld_linux_aarch64_so_1
+          hostPath:
+            path: /lib/ld-linux-aarch64.so.1
+            type: File
+        - name: libdl_so_2
+          hostPath:
+            path: /lib/aarch64-linux-gnu/libdl.so.2
+            type: File
+        - name: libstdc++_so_6
+          hostPath:
+            path: /lib/aarch64-linux-gnu/libstdc++.so.6
+            type: File
+        - name: libgcc_s_so_1
+          hostPath:
+            path: /lib/aarch64-linux-gnu/libgcc_s.so.1
+            type: File
