@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: load-balancer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: load-balancer
+  template:
+    metadata:
+      labels:
+        app: load-balancer
+    spec:
+      runtimeClassName: wasmedge
+      containers:
+        - name: load-balancer
+          image: ghcr.io/second-state/load-balancer:latest
+          imagePullPolicy: Never
+          command: ["load_balancer.wasm"]
+          # env:
+          #   - name: SERVICES
+          #     value: "llama-low-cost-service,3;llama-high-cost-service,1"
+          #   - name: LLAMA_LOW_COST_SERVICE_HOST
+          #     value: "llama-low-cost-service"
+          #   - name: LLAMA_LOW_COST_SERVICE_PORT
+          #     value: "8080"
+          #   - name: LLAMA_HIGH_COST_SERVICE_HOST
+          #     value: "llama-high-cost-service"
+          #   - name: LLAMA_HIGH_COST_SERVICE_PORT
+          #     value: "8080"
+          ports:
+            - containerPort: 8080
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: load-balancer-service
+spec:
+  selector:
+    app: load-balancer
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP
+
+---
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: wasmedge
+handler: wasmedge
