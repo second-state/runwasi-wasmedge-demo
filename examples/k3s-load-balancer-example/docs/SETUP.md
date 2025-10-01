@@ -63,6 +63,7 @@ sudo k3s ctr image import --all-platforms $HOME/runwasi-wasmedge-demo/apps/llama
 cd ./load-balancer
 cargo build --target wasm32-wasip1 --release
 
+cargo install oci-tar-builder
 oci-tar-builder --name load-balancer \
     --repo ghcr.io/second-state \
     --tag latest \
