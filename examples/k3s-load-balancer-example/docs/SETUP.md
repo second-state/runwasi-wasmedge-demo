@@ -90,6 +90,10 @@ curl -LO https://huggingface.co/second-state/Llama-3.2-3B-Instruct-Uncensored-GG
 cd load-balancer
 kubectl apply -f load-balancer/yaml/default-services.yaml
 kubectl apply -f load-balancer/yaml/load-balancer.yaml
+
+# pull watcher image before deploying it
+sudo k3s ctr image pull docker.io/vatsalkeshav/watcher:0.91
+
 kubectl apply -f watcher/yaml/watcher.yaml
 ```
 > Refer `./watcher/README.md` regarding info on `watcher` and watcher.yaml
