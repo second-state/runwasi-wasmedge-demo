@@ -3,7 +3,7 @@
 This demo features `LlamaEdge's llama-api-server` (as WASM-pods) runnning different gguf models in a multi-pod environment - all managed by a load-balancer (also a WASM-pod) - assisted by a service-watcher utilizing `kube-rs` client (a regular non-WASM pod)
 
 ### How it works :
-![Architecture Diagram](docs/diagrams/10001.png)
+![Architecture Diagram](docs/diagrams/loadbalancer-watcher-architecture.png)
 
 ### Load-Balancer and Service-Watcher Duo
 
